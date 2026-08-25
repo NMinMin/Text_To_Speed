@@ -1,4 +1,3 @@
-import io
 import edge_tts
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,7 +6,6 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-# Bắt buộc thêm CORS để gọi được từ Front-end/App
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,7 +13,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 class TTSRequest(BaseModel):
     text: str
@@ -25,27 +22,26 @@ class TTSRequest(BaseModel):
 @app.post("/tts")
 async def generate_speech_post(request: TTSRequest):
     if not request.text.strip():
-        raise HTTPException(
-            status_code=400, detail="Text cannot be empty"
-        )
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
 
-    try:
-        communicate = edge_tts.Communicate(request.text, request.voice)
-        audio_bytes = b""
+    # Hàm generator để stream dữ liệu âm thanh ngay khi vừa tạo xong từng chunk
+    async def audio_stream():
+        try:
+            communicate = edge_tts.Communicate(request.text, request.voice)
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    yield chunk["data"]
+        except Exception as e:
+            print(f"Error streaming TTS: {e}")
 
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_bytes += chunk["data"]
-
-        return StreamingResponse(
-            io.BytesIO(audio_bytes),
-            media_type="audio/mpeg",
-            headers={
-                "Content-Disposition": "inline; filename=speech.mp3"
-            },
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return StreamingResponse(
+        audio_stream(),
+        media_type="audio/mpeg",
+        headers={
+            "Content-Disposition": "inline; filename=speech.mp3",
+            "Accept-Ranges": "bytes"
+        }
+    )
 
 
 @app.get("/tts")
